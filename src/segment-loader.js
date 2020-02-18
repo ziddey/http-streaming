@@ -1617,6 +1617,62 @@ export default class SegmentLoader extends videojs.EventTarget {
     this.appendToSourceBuffer_({ segmentInfo, type, initSegment, data });
   }
 
+  // TODO: Change all of this to use bytes rather than seconds
+  trim_() {
+    if (this.trimInProgress_) {
+      return;
+    }
+    const max = 150000000;
+    let start;
+    let end;
+
+    ['audio', 'video'].forEach((type) => {
+      const sourceBuffer = this.sourceUpdater_[`${type}Buffer`];
+
+      if (!sourceBuffer) {
+        return;
+      }
+      let size = sourceBuffer.currentSize_;
+
+      for (let i = 0; i < sourceBuffer.appends_.length; i++) {
+        if (size < max) {
+          return;
+        }
+        const removeAppend = sourceBuffer.appends_[i];
+
+        size -= removeAppend.size;
+
+        if (start === undefined || removeAppend.start < start) {
+          start = removeAppend.start;
+        }
+        if (end === undefined || removeAppend.end > end) {
+          end = removeAppend.end;
+        }
+      }
+    });
+
+    if (end === undefined) {
+      return;
+    }
+
+    if (end > this.currentTime_() - 3) {
+      if (typeof this.goalBufferLengthChange_ !== 'number') {
+        this.goalBufferLengthChange_ = 0;
+        this.goalBufferLength__ = this.goalBufferLength_;
+        this.goalBufferLength_ = () => this.goalBufferLength__() - this.goalBufferLengthChange_;
+      }
+      this.goalBufferLengthChange_ += 10;
+      end = this.currentTime_() - 3;
+    } else if (this.goalBufferLengthChange_ >= 10) {
+      this.goalBufferLengthChange_ -= 10;
+    }
+
+    this.trimInProgress_ = true;
+    this.remove(start, end, () => {
+      this.trimInProgress_ = false;
+    });
+  }
+
   /**
    * load a specific segment from a request into the buffer
    *
@@ -1625,7 +1681,9 @@ export default class SegmentLoader extends videojs.EventTarget {
   loadSegment_(segmentInfo) {
     this.state = 'WAITING';
     this.pendingSegment_ = segmentInfo;
-    this.trimBackBuffer_(segmentInfo);
+    this.trim_();
+
+    // this.trimBackBuffer_(segmentInfo);
 
     // We'll update the source buffer's timestamp offset once we have transmuxed data, but
     // the transmuxer still needs to be updated before then.

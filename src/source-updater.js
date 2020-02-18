@@ -4,7 +4,16 @@
 import videojs from 'video.js';
 import logger from './util/logger';
 import noop from './util/noop';
-import { buffered } from './util/buffer';
+import { buffered as mergeBuffered } from './util/buffer';
+
+const lastBuffered = function(buffered) {
+  if (!buffered.length) {
+    return [0, 0];
+  }
+  const len = buffered.length - 1;
+
+  return [buffered.start(len), buffered.end(len)];
+};
 
 const updating = (type, sourceUpdater) => {
   const sourceBuffer = sourceUpdater[`${type}Buffer`];
@@ -107,6 +116,10 @@ const actions = {
 
     sourceUpdater.logger_(`Appending segment ${segmentInfo.mediaIndex}'s ${bytes.length} bytes to ${type}Buffer`);
 
+    sourceBuffer.currentSize_ += bytes.length;
+    sourceBuffer.buffered_ = sourceBuffer.buffered;
+    sourceBuffer.appends_.push({size: bytes.length});
+
     sourceBuffer.appendBuffer(bytes);
   },
   remove: (start, end) => (type, sourceUpdater) => {
@@ -115,6 +128,8 @@ const actions = {
     sourceBuffer.removing = true;
 
     sourceUpdater.logger_(`Removing ${start} to ${end} from ${type}Buffer`);
+
+    sourceBuffer.remove_ = {start, end};
     sourceBuffer.remove(start, end);
   },
   timestampOffset: (offset) => (type, sourceUpdater) => {
@@ -159,6 +174,52 @@ const pushQueue = ({type, sourceUpdater, action, doneFn, name}) => {
   shiftQueue(type, sourceUpdater);
 };
 
+const removeAppends = function(sourceBuffer, type) {
+  const {start, end} = sourceBuffer.remove_;
+  let i = sourceBuffer.appends_.length;
+
+  while (i--) {
+    const append = sourceBuffer.appends_[i];
+
+    // full remove
+    if (start <= append.start && end >= append.end) {
+      sourceBuffer.appends_.splice(i, 1);
+      sourceBuffer.currentSize_ -= append.size;
+
+      // start is before or on append, end is in append
+    } else if (start <= append.start && append.end < end) {
+      const removeLength = Math.abs(end - append.end);
+      const appendLength = append.end - append.start;
+      const newSize = Math.ceil((removeLength / appendLength) * append.size);
+
+      sourceBuffer.appends_.splice(i, 1, {start: end, end: append.end, size: newSize});
+      sourceBuffer.currentSize_ -= (append.size - newSize);
+      // start and end are in append
+    } else if (start >= append.start && end <= append.end) {
+      const removeLength = Math.abs(end - start);
+      const appendLength = append.end - append.start;
+      const newSize = Math.ceil((removeLength / appendLength) * append.size);
+
+      const newAppendOne = {start: end, end: append.end};
+      const newAppendTwo = {start: append.start, end: start};
+
+      const oneLength = newAppendOne.start + newAppendOne.end;
+      const twoLength = newAppendTwo.start + newAppendTwo.end;
+      const newTotal = oneLength + twoLength;
+
+      newAppendOne.size = Math.ceil((oneLength / newTotal) * newSize);
+      newAppendTwo.size = Math.ceil((twoLength / newTotal) * newSize);
+
+      sourceBuffer.appends_.splice(i, 1, newAppendOne);
+      sourceBuffer.appends_.splice(i, 0, newAppendTwo);
+
+      sourceBuffer.currentSize_ -= (append.size - newSize);
+    }
+  }
+
+  sourceBuffer.remove_ = null;
+};
+
 const onUpdateend = (type, sourceUpdater) => (e) => {
   // Although there should, in theory, be a pending action for any updateend receieved,
   // there are some actions that may trigger updateend events without set definitions in
@@ -167,6 +228,25 @@ const onUpdateend = (type, sourceUpdater) => (e) => {
   // if we encounter an updateend without a corresponding pending action from our queue
   // for that source buffer type, process the next action.
   if (sourceUpdater.queuePending[type]) {
+    const sourceBuffer = sourceUpdater[`${type}Buffer`];
+
+    if (sourceUpdater.queuePending[type].name === 'appendBuffer') {
+      const newBuffered = lastBuffered(sourceBuffer.buffered);
+      const currentAppend = sourceBuffer.appends_[sourceBuffer.appends_.length - 1];
+      const oldBuffered = lastBuffered(sourceBuffer.buffered_);
+
+      if (!oldBuffered.length) {
+        currentAppend.start = newBuffered[0];
+        currentAppend.end = newBuffered[1];
+      } else {
+        currentAppend.start = oldBuffered[1];
+        currentAppend.end = newBuffered[1];
+      }
+    }
+
+    if (sourceUpdater.queuePending[type].name === 'remove') {
+      removeAppends(sourceBuffer, type);
+    }
     sourceUpdater[`${type}Buffer`].removing = false;
     const doneFn = sourceUpdater.queuePending[type].doneFn;
 
@@ -227,12 +307,16 @@ export default class SourceUpdater extends videojs.EventTarget {
     if (codecs.audio) {
       this.audioBuffer = this.mediaSource.addSourceBuffer(`audio/mp4;codecs="${codecs.audio}"`);
       this.audioBuffer.removing = false;
+      this.audioBuffer.appends_ = [];
+      this.audioBuffer.currentSize_ = 0;
       this.logger_(`created SourceBuffer audio/mp4;codecs="${codecs.audio}"`);
     }
 
     if (codecs.video) {
       this.videoBuffer = this.mediaSource.addSourceBuffer(`video/mp4;codecs="${codecs.video}"`);
       this.videoBuffer.removing = false;
+      this.videoBuffer.appends_ = [];
+      this.videoBuffer.currentSize_ = 0;
       this.logger_(`created SourceBuffer video/mp4;codecs="${codecs.video}"`);
     }
 
@@ -317,7 +401,7 @@ export default class SourceUpdater extends videojs.EventTarget {
   }
 
   buffered() {
-    return buffered(this.videoBuffer, this.audioBuffer);
+    return mergeBuffered(this.videoBuffer, this.audioBuffer);
   }
 
   setDuration(duration, doneFn = noop) {
