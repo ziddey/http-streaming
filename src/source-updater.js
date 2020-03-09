@@ -213,36 +213,68 @@ export default class SourceUpdater extends videojs.EventTarget {
     return !!(this.audioBuffer || this.videoBuffer);
   }
 
-  createSourceBuffers(codecs) {
-    if (this.ready()) {
-      // already created them before
-      return;
-    }
-
+  changeSourceBuffers(codecs) {
     if (this.mediaSource.readyState === 'closed') {
+      // reset old litener
+      if (this.sourceopenListener_) {
+        this.mediaSource.removeEventListener('sourceopen', this.sourceopenListener_);
+      }
+
       this.sourceopenListener_ = this.createSourceBuffers.bind(this, codecs);
       this.mediaSource.addEventListener('sourceopen', this.sourceopenListener_);
       return;
     }
 
-    if (codecs.audio) {
-      const mime = getMimeForCodec(codecs.audio);
+    this.sourceopenListener_ = null;
 
-      this.audioBuffer = this.mediaSource.addSourceBuffer(mime);
-      this.audioBuffer.removing = false;
-      this.logger_(`created SourceBuffer ${mime}`);
-    }
+    this.queue = [];
+    this.queuePending = {
+      audio: null,
+      video: null
+    };
 
-    if (codecs.video) {
-      const mime = getMimeForCodec(codecs.video);
+    // TODO: synchronous buffer removal?
+    ['audio', 'video'].forEach((name) => {
+      const buffer = this[`${name}Buffer`];
 
-      this.videoBuffer = this.mediaSource.addSourceBuffer(mime);
-      this.videoBuffer.removing = false;
-      this.logger_(`created SourceBuffer ${mime}`);
-    }
+      // no codec for this buffer
+      if (!codecs[name]) {
+        if (buffer) {
+          this.removeBuffer(name);
+        }
+        return;
+      }
+      const type = getMimeForCodec(codecs[name]);
 
-    this.trigger('ready');
+      // codec did not change,
+      if (codecs[name] === this[`${name}Codec`]) {
+        return;
+      }
+
+      this[`${name}Codec`] = codecs[name];
+
+      // codec changed and we have changeType
+      if (buffer && buffer.changeType) {
+        this.logger_(`changed SourceBuffer ${type}`);
+        buffer.changeType(type);
+        return;
+      }
+
+      // codec changed but no change type, remake the buffer
+      if (buffer) {
+        this.removeBuffer(name);
+      }
+
+      this[`${name}Buffer`] = this.mediaSource.addSourceBuffer(type);
+      this[`${name}Buffer`].removing = false;
+      this.logger_(`created SourceBuffer ${type}`);
+    });
+
     this.start_();
+  }
+
+  canChangeType() {
+    return !!(this.videoBuffer.changeType || this.mediaSource.removeSourceBuffer);
   }
 
   start_() {
@@ -482,62 +514,60 @@ export default class SourceUpdater extends videojs.EventTarget {
     }
   }
 
+  removeBuffer(name) {
+    const captialName = name.charAt(0).toUpperCase() + name.slice(1);
+    const buffer = this[`${name}Buffer`];
+
+    if (name === 'video') {
+      this.videoAppendQueued_ = false;
+    } else {
+      this.delayedAudioAppendQueue_.length = 0;
+    }
+
+    if (!buffer) {
+      return;
+    }
+
+    const disposeFn = () => {
+      if (this.mediaSource.readyState === 'open') {
+        // ie 11 likes to throw on abort with InvalidAccessError or InvalidStateError
+        // dom exceptions
+        try {
+          buffer.abort();
+        } catch (e) {
+          videojs.log.warn('Failed to call abort on audio buffer', e);
+        }
+      }
+      buffer.removeEventListener('updateend', this[`on${captialName}UpdateEnd_`]);
+      buffer.removeEventListener('updateend', disposeFn);
+      buffer.removeEventListener('error', this[`on${captialName}Error_`]);
+      if (this.mediaSource.removeSourceBuffer) {
+        this.mediaSource.removeSourceBuffer(buffer);
+      }
+
+      if (buffer === this[`${name}Buffer`]) {
+        this[`${name}Buffer`] = null;
+      }
+    };
+
+    // TODO: can we just use "updating" rather than removing?
+    //       this was implemented in https://github.com/videojs/http-streaming/pull/442
+    if (buffer && buffer.removing) {
+      buffer.addEventListener('updateend', disposeFn);
+    } else {
+      disposeFn();
+    }
+
+  }
+
   /**
    * dispose of the source updater and the underlying sourceBuffer
    */
   dispose() {
     this.trigger('dispose');
-    const audioDisposeFn = () => {
-      if (this.mediaSource.readyState === 'open') {
-        // ie 11 likes to throw on abort with InvalidAccessError or InvalidStateError
-        // dom exceptions
-        try {
-          this.audioBuffer.abort();
-        } catch (e) {
-          videojs.log.warn('Failed to call abort on audio buffer', e);
-        }
-      }
-      this.audioBuffer.removeEventListener('updateend', this.onAudioUpdateEnd_);
-      this.audioBuffer.removeEventListener('updateend', audioDisposeFn);
-      this.audioBuffer.removeEventListener('error', this.onAudioError_);
-      this.audioBuffer = null;
-    };
-    const videoDisposeFn = () => {
-      if (this.mediaSource.readyState === 'open') {
-        // ie 11 likes to throw on abort with InvalidAccessError or InvalidStateError
-        // dom exceptions
-        try {
-          this.videoBuffer.abort();
-        } catch (e) {
-          videojs.log.warn('Failed to call abort on video buffer', e);
-        }
-      }
-      this.videoBuffer.removeEventListener('updateend', this.onVideoUpdateEnd_);
-      this.videoBuffer.removeEventListener('error', this.onVideoError_);
-      this.videoBuffer.removeEventListener('updateend', videoDisposeFn);
-      this.videoBuffer = null;
-    };
 
-    // TODO: can we just use "updating" rather than removing?
-    //       this was implemented in https://github.com/videojs/http-streaming/pull/442
-    if (this.audioBuffer) {
-      if (this.audioBuffer.removing) {
-        this.audioBuffer.addEventListener('updateend', audioDisposeFn);
-      } else {
-        audioDisposeFn();
-      }
-    }
-
-    if (this.videoBuffer) {
-      if (this.videoBuffer.removing) {
-        this.videoBuffer.addEventListener('updateend', videoDisposeFn);
-      } else {
-        videoDisposeFn();
-      }
-    }
-
-    this.videoAppendQueued_ = false;
-    this.delayedAudioAppendQueue_.length = 0;
+    this.removeBuffer('audio');
+    this.removeBuffer('video');
 
     this.mediaSource.removeEventListener('sourceopen', this.sourceopenListener_);
 

@@ -1199,10 +1199,6 @@ export class MasterPlaylistController extends videojs.EventTarget {
     }
 
     // source buffers are already created
-    if (this.sourceUpdater_.ready()) {
-      return;
-    }
-
     const mainStartingMedia = this.mainSegmentLoader_.startingMedia_;
     const hasAltAudio = !!this.mediaTypes_.AUDIO.activePlaylistLoader;
 
@@ -1258,7 +1254,7 @@ export class MasterPlaylistController extends videojs.EventTarget {
     }
 
     try {
-      this.sourceUpdater_.createSourceBuffers(codecs);
+      this.sourceUpdater_.changeSourceBuffers(codecs);
     } catch (e) {
       const error = 'Failed to create SourceBuffers: ' + e;
 
@@ -1272,7 +1268,9 @@ export class MasterPlaylistController extends videojs.EventTarget {
       return;
     }
 
-    this.excludeIncompatibleVariants_(media);
+    if (!this.sourceUpdater_.canChangeType) {
+      this.excludeIncompatibleVariants_(media);
+    }
   }
 
   /**
