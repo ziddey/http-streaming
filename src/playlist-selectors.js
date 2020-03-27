@@ -200,7 +200,7 @@ export const simpleSelector = function(
   // than the current estimated bandwidth
   const bandwidthPlaylistReps = enabledPlaylistReps.filter((rep) => rep.bandwidth * Config.BANDWIDTH_VARIANCE < playerBandwidth);
 
-  let highestRemainingBandwidthRep =
+  const highestRemainingBandwidthRep =
     bandwidthPlaylistReps[bandwidthPlaylistReps.length - 1];
 
   // get all of the renditions with the same (highest) bandwidth
@@ -236,40 +236,28 @@ export const simpleSelector = function(
   // filter out playlists without resolution information
   const haveResolution = bandwidthPlaylistReps.filter((rep) => rep.width && rep.height);
 
-  // sort variants by resolution
-  stableSort(haveResolution, (left, right) => left.width - right.width);
-
-  // if we have the exact resolution as the player use it
-  const resolutionBestRepList = haveResolution.filter((rep) => rep.width === playerWidth && rep.height === playerHeight);
-
-  highestRemainingBandwidthRep = resolutionBestRepList[resolutionBestRepList.length - 1];
-  // ensure that we pick the highest bandwidth variant that have exact resolution
-  const resolutionBestRep = resolutionBestRepList.filter((rep) => rep.bandwidth === highestRemainingBandwidthRep.bandwidth)[0];
-
-  let resolutionPlusOneList;
-  let resolutionPlusOneSmallest;
-  let resolutionPlusOneRep;
-
   // find the smallest variant that is larger than the player
   // if there is no match of exact resolution
-  if (!resolutionBestRep) {
-    resolutionPlusOneList = haveResolution.filter((rep) => rep.width > playerWidth || rep.height > playerHeight);
+  const resolutionPlusOneList = haveResolution.map((rep) => {
+    rep.pixelDiff = Math.abs(rep.width - playerWidth) + Math.abs(rep.height - playerHeight);
+    return rep;
+  });
 
-    // find all the variants have the same smallest resolution
-    resolutionPlusOneSmallest = resolutionPlusOneList.filter((rep) => rep.width === resolutionPlusOneList[0].width &&
-               rep.height === resolutionPlusOneList[0].height);
+  // get the highest bandwidth, closest resolution playlist
+  stableSort(resolutionPlusOneList, (left, right) => {
+    // sort by highest bandwidth if pixelDiff is the same
+    if (left.pixelDiff === right.pixelDiff) {
+      return right.bandwidth - left.bandwidth;
+    }
 
-    // ensure that we also pick the highest bandwidth variant that
-    // is just-larger-than the video player
-    highestRemainingBandwidthRep =
-      resolutionPlusOneSmallest[resolutionPlusOneSmallest.length - 1];
-    resolutionPlusOneRep = resolutionPlusOneSmallest.filter((rep) => rep.bandwidth === highestRemainingBandwidthRep.bandwidth)[0];
-  }
+    return left.pixelDiff - right.pixelDiff;
+  });
+
+  const closestResolution = resolutionPlusOneList[0];
 
   // fallback chain of variants
   const chosenRep = (
-    resolutionPlusOneRep ||
-    resolutionBestRep ||
+    closestResolution ||
     bandwidthBestRep ||
     enabledPlaylistReps[0] ||
     sortedPlaylistReps[0]
