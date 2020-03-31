@@ -1317,7 +1317,7 @@ QUnit.test('selects a playlist below the current bandwidth', function(assert) {
 });
 
 QUnit.test(
-  'selects a primary rendtion when there are multiple rendtions share same attributes',
+  'selects a primary rendition when there are multiple rendtions share same attributes',
   function(assert) {
     let playlist;
 
@@ -1477,12 +1477,12 @@ QUnit.test('selects the correct rendition by tech dimensions', function(assert) 
 
   assert.deepEqual(
     playlist.attributes.RESOLUTION,
-    {width: 960, height: 540},
+    {width: 396, height: 224},
     'should return the correct resolution by tech dimensions'
   );
   assert.equal(
     playlist.attributes.BANDWIDTH,
-    1928000,
+    440000,
     'should have the expected bandwidth in case of multiple'
   );
 
