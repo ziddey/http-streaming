@@ -266,10 +266,8 @@ export const simpleSelector = function(
   if (chosenRep && chosenRep.playlist) {
     let type = 'sortedPlaylistReps';
 
-    if (resolutionPlusOneRep) {
-      type = 'resolutionPlusOneRep';
-    } else if (resolutionBestRep) {
-      type = 'resolutionBestRep';
+    if (closestResolution) {
+      type = 'closestResolution';
     } else if (bandwidthBestRep) {
       type = 'bandwidthBestRep';
     } else if (enabledPlaylistReps[0]) {
