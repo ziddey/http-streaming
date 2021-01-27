@@ -259,7 +259,6 @@ const handleSegmentResponse = ({
 const transmuxAndNotify = ({
   segment,
   bytes,
-  isPartial,
   trackInfoFn,
   timingInfoFn,
   videoSegmentTimingInfoFn,
@@ -281,30 +280,28 @@ const transmuxAndNotify = ({
   const videoEndFn = timingInfoFn.bind(null, segment, 'video', 'end');
 
   // Check to see if we are appending a full segment.
-  if (!isPartial && !segment.lastReachedChar) {
-    // In the full segment transmuxer, we don't yet have the ability to extract a "proper"
-    // start time. Meaning cached frame data may corrupt our notion of where this segment
-    // really starts. To get around this, full segment appends should probe for the info
-    // needed.
-    const probeResult = probeTsSegment(bytes, segment.baseStartTime);
+  // In the full segment transmuxer, we don't yet have the ability to extract a "proper"
+  // start time. Meaning cached frame data may corrupt our notion of where this segment
+  // really starts. To get around this, full segment appends should probe for the info
+  // needed.
+  const probeResult = probeTsSegment(bytes, segment.baseStartTime);
 
-    if (probeResult) {
-      trackInfoFn(segment, {
-        hasAudio: probeResult.hasAudio,
-        hasVideo: probeResult.hasVideo,
-        isMuxed
-      });
-      trackInfoFn = null;
+  if (probeResult) {
+    trackInfoFn(segment, {
+      hasAudio: probeResult.hasAudio,
+      hasVideo: probeResult.hasVideo,
+      isMuxed
+    });
+    trackInfoFn = null;
 
-      if (probeResult.hasAudio && !isMuxed) {
-        audioStartFn(probeResult.audioStart);
-      }
-      if (probeResult.hasVideo) {
-        videoStartFn(probeResult.videoStart);
-      }
-      audioStartFn = null;
-      videoStartFn = null;
+    if (probeResult.hasAudio && !isMuxed) {
+      audioStartFn(probeResult.audioStart);
     }
+    if (probeResult.hasVideo) {
+      videoStartFn(probeResult.videoStart);
+    }
+    audioStartFn = null;
+    videoStartFn = null;
   }
 
   transmux({
@@ -312,7 +309,6 @@ const transmuxAndNotify = ({
     transmuxer: segment.transmuxer,
     audioAppendStart: segment.audioAppendStart,
     gopsToAlignWith: segment.gopsToAlignWith,
-    isPartial,
     remux: isMuxed,
     onData: (result) => {
       result.type = result.type === 'combined' ? 'video' : result.type;
@@ -361,9 +357,7 @@ const transmuxAndNotify = ({
       captionsFn(segment, [captions]);
     },
     onDone: (result) => {
-      // To handle partial appends, there won't be a done function passed in (since
-      // there's still, potentially, more segment to process), so there's nothing to do.
-      if (!doneFn || isPartial) {
+      if (!doneFn) {
         return;
       }
       result.type = result.type === 'combined' ? 'video' : result.type;
@@ -375,7 +369,6 @@ const transmuxAndNotify = ({
 const handleSegmentBytes = ({
   segment,
   bytes,
-  isPartial,
   trackInfoFn,
   timingInfoFn,
   videoSegmentTimingInfoFn,
@@ -506,7 +499,6 @@ const handleSegmentBytes = ({
   transmuxAndNotify({
     segment,
     bytes,
-    isPartial,
     trackInfoFn,
     timingInfoFn,
     videoSegmentTimingInfoFn,
@@ -563,7 +555,6 @@ const decryptSegment = ({
       handleSegmentBytes({
         segment,
         bytes: segment.bytes,
-        isPartial: false,
         trackInfoFn,
         timingInfoFn,
         videoSegmentTimingInfoFn,
@@ -686,7 +677,6 @@ const waitForCompletion = ({
       handleSegmentBytes({
         segment,
         bytes: segment.bytes,
-        isPartial: false,
         trackInfoFn,
         timingInfoFn,
         videoSegmentTimingInfoFn,
@@ -745,46 +735,12 @@ const handleProgress = ({
   audioSegmentTimingInfoFn,
   id3Fn,
   captionsFn,
-  dataFn,
-  handlePartialData
+  dataFn
 }) => (event) => {
   const request = event.target;
 
   if (request.aborted) {
     return;
-  }
-
-  // don't support encrypted segments or fmp4 for now
-  if (
-    handlePartialData &&
-    !segment.key &&
-    // although responseText "should" exist, this guard serves to prevent an error being
-    // thrown on the next check for two primary cases:
-    // 1. the mime type override stops working, or is not implemented for a specific
-    //    browser
-    // 2. when using mock XHR libraries like sinon that do not allow the override behavior
-    request.responseText &&
-    // in order to determine if it's an fmp4 we need at least 8 bytes
-    request.responseText.length >= 8
-  ) {
-    const newBytes = stringToArrayBuffer(request.responseText.substring(segment.lastReachedChar || 0));
-
-    if (segment.lastReachedChar || !isLikelyFmp4MediaSegment(new Uint8Array(newBytes))) {
-      segment.lastReachedChar = request.responseText.length;
-
-      handleSegmentBytes({
-        segment,
-        bytes: newBytes,
-        isPartial: true,
-        trackInfoFn,
-        timingInfoFn,
-        videoSegmentTimingInfoFn,
-        audioSegmentTimingInfoFn,
-        id3Fn,
-        captionsFn,
-        dataFn
-      });
-    }
   }
 
   segment.stats = videojs.mergeOptions(segment.stats, getProgressStats(event));
@@ -874,8 +830,7 @@ export const mediaSegmentRequest = ({
   id3Fn,
   captionsFn,
   dataFn,
-  doneFn,
-  handlePartialData
+  doneFn
 }) => {
   const activeXhrs = [];
   const finishProcessingFn = waitForCompletion({
@@ -925,17 +880,6 @@ export const mediaSegmentRequest = ({
     headers: segmentXhrHeaders(segment)
   });
 
-  if (handlePartialData) {
-    // setting to text is required for partial responses
-    // conversion to ArrayBuffer happens later
-    segmentRequestOptions.responseType = 'text';
-    segmentRequestOptions.beforeSend = (xhrObject) => {
-      // XHR binary charset opt by Marcus Granado 2006 [http://mgran.blogspot.com]
-      // makes the browser pass through the "text" unparsed
-      xhrObject.overrideMimeType('text/plain; charset=x-user-defined');
-    };
-  }
-
   const segmentRequestCallback = handleSegmentResponse({
     segment,
     finishProcessingFn,
@@ -954,8 +898,7 @@ export const mediaSegmentRequest = ({
       audioSegmentTimingInfoFn,
       id3Fn,
       captionsFn,
-      dataFn,
-      handlePartialData
+      dataFn
     })
   );
   activeXhrs.push(segmentXhr);

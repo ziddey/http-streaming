@@ -18,8 +18,7 @@ export const handleData_ = (event, transmuxedData, callback) => {
     metadata
   });
 
-  // right now, boxes will come back from partial transmuxer, data from full
-  const boxes = event.data.segment.boxes || {
+  const boxes = {
     data: event.data.segment.data
   };
 
@@ -71,7 +70,6 @@ export const processTransmux = ({
   bytes,
   audioAppendStart,
   gopsToAlignWith,
-  isPartial,
   remux,
   onData,
   onTrackInfo,
@@ -84,7 +82,6 @@ export const processTransmux = ({
   onDone
 }) => {
   const transmuxedData = {
-    isPartial,
     buffer: []
   };
 
@@ -184,7 +181,7 @@ export const processTransmux = ({
 
   // even if we didn't push any bytes, we have to make sure we flush in case we reached
   // the end of the segment
-  transmuxer.postMessage({ action: isPartial ? 'partialFlush' : 'flush' });
+  transmuxer.postMessage({ action: 'flush' });
 };
 
 export const dequeue = () => {
