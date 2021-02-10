@@ -1287,8 +1287,21 @@ export class MasterPlaylistController extends videojs.EventTarget {
       return;
     }
 
-    const suggestedPresentationDelay = this.masterPlaylistLoader_.master.suggestedPresentationDelay;
-    const mainSeekable = Vhs.Playlist.seekable(media, expired, suggestedPresentationDelay);
+    let delay;
+
+    if (this.masterPlaylistLoader_.master.hasOwnProperty('suggestedPresentationDelay')) {
+      delay = this.masterPlaylistLoader_.master.suggestedPresentationDelay;
+    } else if (media.serverControl && media.serverControl['PART-HOLD-BACK'] && media.partTargetDuration) {
+      delay = media.serverControl['PART-HOLD-BACK'] * media.partTargetDuration;
+    } else if (media.serverControl && media.serverControl['HOLD-BACK'] && media.targetDuration) {
+      delay = media.serverControl['HOLD-BACK'] * media.targetDuration;
+    } else if (media.partTargetDuration) {
+      delay = media.partTargetDuration * 3;
+    } else if (media.targetDuration) {
+      delay = media.targetDuration * 3;
+    }
+
+    const mainSeekable = Vhs.Playlist.seekable(media, expired, delay);
 
     if (mainSeekable.length === 0) {
       return;
@@ -1302,7 +1315,7 @@ export class MasterPlaylistController extends videojs.EventTarget {
         return;
       }
 
-      audioSeekable = Vhs.Playlist.seekable(media, expired, suggestedPresentationDelay);
+      audioSeekable = Vhs.Playlist.seekable(media, expired, delay);
 
       if (audioSeekable.length === 0) {
         return;

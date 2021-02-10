@@ -253,6 +253,7 @@ export const safeLiveIndex = function(playlist, liveEdgePadding) {
     distanceFromEnd += playlist.segments[i].duration;
 
     if (distanceFromEnd >= safeDistance) {
+      i++;
       break;
     }
   }
@@ -347,9 +348,17 @@ export const getMediaInfoForTime = function(
   startIndex,
   startTime
 ) {
-  let i;
-  let segment;
-  const numSegments = playlist.segments.length;
+
+  const partSegments = playlist.segments.reduce((acc, segment, si) => {
+    if (segment.parts) {
+      segment.parts.forEach(function(part, pi) {
+        acc.push({duration: part.DURATION, segmentIndex: si, partIndex: pi});
+      });
+    } else {
+      acc.push({duration: segment.duration, segmentIndex: si, partIndex: null});
+    }
+    return acc;
+  }, []);
 
   let time = currentTime - startTime;
 
@@ -357,21 +366,26 @@ export const getMediaInfoForTime = function(
     // Walk backward from startIndex in the playlist, adding durations
     // until we find a segment that contains `time` and return it
     if (startIndex > 0) {
-      for (i = startIndex - 1; i >= 0; i--) {
-        segment = playlist.segments[i];
+      for (let i = startIndex - 1; i >= 0; i--) {
+        const segment = partSegments[i];
+
         time += (segment.duration + TIME_FUDGE_FACTOR);
+
         if (time > 0) {
           return {
-            mediaIndex: i,
-            startTime: startTime - sumDurations(playlist, startIndex, i)
+            mediaIndex: segment.segmentIndex,
+            startTime: startTime - sumDurations(playlist, startIndex, segment.segmentIndex),
+            partIndex: segment.partIndex
           };
         }
       }
     }
+
     // We were unable to find a good segment within the playlist
     // so select the first segment
     return {
-      mediaIndex: 0,
+      mediaIndex: partSegments[0].segmentIndex,
+      partIndex: partSegments[0].partIndex,
       startTime: currentTime
     };
   }
@@ -380,11 +394,11 @@ export const getMediaInfoForTime = function(
   // adding target durations. If we "run out of time" before getting to
   // the first segment, return the first segment
   if (startIndex < 0) {
-    for (i = startIndex; i < 0; i++) {
+    for (let i = startIndex; i < 0; i++) {
       time -= playlist.targetDuration;
       if (time < 0) {
         return {
-          mediaIndex: 0,
+          mediaIndex: partSegments[0].segmentIndex,
           startTime: currentTime
         };
       }
@@ -394,20 +408,23 @@ export const getMediaInfoForTime = function(
 
   // Walk forward from startIndex in the playlist, subtracting durations
   // until we find a segment that contains `time` and return it
-  for (i = startIndex; i < numSegments; i++) {
-    segment = playlist.segments[i];
+  for (let i = startIndex; i < partSegments.length; i++) {
+    const segment = partSegments[i];
+
     time -= segment.duration + TIME_FUDGE_FACTOR;
+
     if (time < 0) {
       return {
-        mediaIndex: i,
-        startTime: startTime + sumDurations(playlist, startIndex, i)
+        mediaIndex: segment.segmentIndex,
+        startTime: startTime + sumDurations(playlist, startIndex, segment.segmentIndex),
+        partIndex: segment.partIndex
       };
     }
   }
 
   // We are out of possible candidates so load the last one...
   return {
-    mediaIndex: numSegments - 1,
+    mediaIndex: partSegments[partSegments.length - 1].segmentIndex,
     startTime: currentTime
   };
 };
