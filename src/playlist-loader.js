@@ -127,6 +127,16 @@ export const updateMaster = (master, media, unchangedCheck = isPlaylistUnchanged
 
   media.segments = media.segments || [];
 
+  // add any skipped segments back onto the front
+  // so that they can be carried to the new playlist.
+  if (media.skip) {
+    const segments = [];
+
+    segments.length = media.skip.skippedSegments;
+
+    media.segments = segments.concat(media.segments);
+  }
+
   // a preloadSegment with only preloadHints is not currently
   // a usable segment, only include a preloadSegment that has
   // parts.
@@ -227,11 +237,35 @@ export default class PlaylistLoader extends EventTarget {
         // only refresh the media playlist if no other activity is going on
         return;
       }
+      const media = this.media();
 
+      let uri = resolveUrl(this.master.uri, media.uri);
+      const query = [];
+
+      // TODO: check CAN skip until to verify we can skip until x segment
+      // wait for the next part/segment
+      if (media.serverControl.canBlockReload) {
+        const preloadSegment = media.preloadSegment;
+
+        if (preloadSegment && preloadSegment.preloadHints) {
+          query.push(`_HLS_part=${(preloadSegment.parts && preloadSegment.parts.length || 0) + preloadSegment.preloadHints.length}`);
+        }
+        query.push(`_HLS_msn=${media.mediaSequence + media.segments.length - 1}`);
+      }
+
+      if (media.serverControl.canSkipUntil) {
+        query.push('_HLS_skip=YES');
+      }
+
+      query.forEach(function(str, i) {
+        const symbol = i === 0 ? '?' : '&';
+
+        uri += `${symbol}${str}`;
+      });
       this.state = 'HAVE_CURRENT_METADATA';
 
       this.request = this.vhs_.xhr({
-        uri: resolveUrl(this.master.uri, this.media().uri),
+        uri,
         withCredentials: this.withCredentials
       }, (error, req) => {
         // disposed
