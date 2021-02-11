@@ -433,6 +433,25 @@ export default class SyncController extends videojs.EventTarget {
     return this.timelines[timeline].mapping;
   }
 
+  getSegmentAbsoluteTime_(segmentInfo, timingInfo) {
+    const timing = {
+      mappingObj: this.timelines[segmentInfo.timeline] || {
+        time: segmentInfo.startOfSegment,
+        mapping: segmentInfo.startOfSegment - timingInfo.start
+      }
+    };
+
+    if (typeof segmentInfo.timestampOffset === 'number') {
+      timing.start = segmentInfo.startOfSegment;
+      timing.end = timingInfo.end + timing.mappingObj.mapping;
+    } else if (timing.mappingObj) {
+      timing.start = timingInfo.start + timing.mappingObj.mapping;
+      timing.end = timingInfo.end + timing.mappingObj.mapping;
+    }
+
+    return timing;
+  }
+
   /**
    * Use the "media time" for a segment to generate a mapping to "display time" and
    * save that display time to the segment.
@@ -449,32 +468,23 @@ export default class SyncController extends videojs.EventTarget {
    *          Returns false if segment time mapping could not be calculated
    */
   calculateSegmentTimeMapping_(segmentInfo, timingInfo, shouldSaveTimelineMapping) {
-    const segment = segmentInfo.segment;
-    let mappingObj = this.timelines[segmentInfo.timeline];
+    const timing = this.getSegmentAbsoluteTime_(segmentInfo, timingInfo);
 
-    if (typeof segmentInfo.timestampOffset === 'number') {
-      mappingObj = {
-        time: segmentInfo.startOfSegment,
-        mapping: segmentInfo.startOfSegment - timingInfo.start
-      };
-      if (shouldSaveTimelineMapping) {
-        this.timelines[segmentInfo.timeline] = mappingObj;
-        this.trigger('timestampoffset');
+    if (typeof segmentInfo.timestampOffset === 'number' && shouldSaveTimelineMapping) {
+      this.timelines[segmentInfo.timeline] = timing.mappingObj;
+      this.trigger('timestampoffset');
 
-        this.logger_(`time mapping for timeline ${segmentInfo.timeline}: ` +
-          `[time: ${mappingObj.time}] [mapping: ${mappingObj.mapping}]`);
-      }
-
-      segment.start = segmentInfo.startOfSegment;
-      segment.end = timingInfo.end + mappingObj.mapping;
-    } else if (mappingObj) {
-      segment.start = timingInfo.start + mappingObj.mapping;
-      segment.end = timingInfo.end + mappingObj.mapping;
-    } else {
-      return false;
+      this.logger_(`time mapping for timeline ${segmentInfo.timeline}: ` +
+        `[time: ${timing.mappingObj.time}] [mapping: ${timing.mappingObj.mapping}]`);
     }
 
-    return true;
+    if (timing.hasOwnProperty('start') && timing.hasOwnProperty('end')) {
+      segmentInfo.segment.start = timing.start;
+      segmentInfo.segment.end = timing.end;
+      return true;
+    }
+
+    return false;
   }
 
   /**

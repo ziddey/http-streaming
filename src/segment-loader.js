@@ -957,6 +957,9 @@ export default class SegmentLoader extends videojs.EventTarget {
         // out before we start adding more data
         this.resyncLoader();
       }
+      if (oldPlaylist) {
+        console.log(`${oldPlaylist.uri} -> ${newPlaylist.uri}`)
+      }
       this.currentMediaInfo_ = void 0;
       this.trigger('playlistupdate');
 
@@ -1352,6 +1355,12 @@ export default class SegmentLoader extends videojs.EventTarget {
       return;
     }
 
+    console.log({
+      segmentInfo,
+      previousMediaIndex: currentMediaIndex,
+      fetchAtBuffer: this.fetchAtBuffer_
+    });
+
     this.logger_(`checkBuffer_ returning ${segmentInfo.uri}`, {
       segmentInfo,
       playlist,
@@ -1387,7 +1396,7 @@ export default class SegmentLoader extends videojs.EventTarget {
       }).filter(s => s.timeline === this.currentTimeline_);
 
     if (segmentIndexArray.length) {
-      return segmentIndexArray[Math.min(segmentIndexArray.length - 1, 1)].segmentIndex;
+      return segmentIndexArray[segmentIndexArray.length - 2].segmentIndex;
     }
 
     return Math.max(playlist.segments.length - 1, 0);
@@ -2684,6 +2693,7 @@ export default class SegmentLoader extends videojs.EventTarget {
     }
 
     const segmentInfo = this.pendingSegment_;
+    const segment = segmentInfo.segment;
 
     // Now that the end of the segment has been reached, we can set the end time. It's
     // best to wait until all appends are done so we're sure that the primary media is
@@ -2730,11 +2740,19 @@ export default class SegmentLoader extends videojs.EventTarget {
     this.pendingSegment_ = null;
     this.state = 'READY';
 
-    // TODO minor, but for partial segment downloads, this can be done earlier to save
-    // on bandwidth and download time
     if (segmentInfo.isSyncRequest) {
-      this.trigger('syncinfoupdate');
-      return;
+      const segmentDiff = segment.end && segment.end - this.currentTime_();
+      const td = segmentInfo.playlist.targetDuration;
+
+      if (!segment.end || (segmentDiff - td) > td) {
+        console.log(`inaccurate sync ${segmentDiff-td} ${td} request - ${segmentInfo.uri}`);
+        this.trigger('syncinfoupdate');
+        return;
+      } else {
+        console.log(`accurate sync ${segmentDiff-td} ${td} request - ${segmentInfo.uri}`);
+      }
+    } else {
+      console.log(`normal Request - ${segmentInfo.uri}`);
     }
 
     this.addSegmentMetadataCue_(segmentInfo);
@@ -2763,8 +2781,6 @@ export default class SegmentLoader extends videojs.EventTarget {
     // and attempt to resync when the post-update seekable window and live
     // point would mean that this was the perfect segment to fetch
     this.trigger('syncinfoupdate');
-
-    const segment = segmentInfo.segment;
 
     // If we previously appended a segment that ends more than 3 targetDurations before
     // the currentTime_ that means that our conservative guess was too conservative.
