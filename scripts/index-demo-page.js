@@ -378,7 +378,7 @@
               overrideNative: getInputValue(stateEls['override-native']),
               handlePartialData: getInputValue(stateEls.partial),
               experimentalBufferBasedABR: getInputValue(stateEls['buffer-water']),
-              llhls: getInputValue(stateEls.llhls)
+              experimentalLLHLS: getInputValue(stateEls.llhls)
             }
           }
         });
